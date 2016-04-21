@@ -5,6 +5,8 @@ import Data.Ord
 import Data.Maybe
 import Data.Function(on)
 import Debug.Trace
+import System.Environment
+import System.Exit
 
 import System.Random
 
@@ -18,10 +20,26 @@ type RandomInts = [Int]
 
 main = do 
 	let rand_gen = mkStdGen 4321
-	input_string <- readFile "lamacollectief.txt"
-	print $ unwords $ generate_text (model input_string) "ik" 1000 rand_gen
+	prog_args <- getArgs
+	(filename, initial_word, word_count) <- (handleArgs prog_args)
+
+	input_string <- readFile filename
+	print $ unwords $ generate_text (model input_string) initial_word word_count rand_gen
 		where 
 			model text = get_markov_model $ tokenize $ map toLower text
+
+	
+	--	return = Just
+	--	fail _ = Nothing
+-- handleArgs :: [String] -> Maybe (String, String)
+handleArgs [] = do 
+	fail "\nUsage: markov FILE [WORD] [COUNT]"
+handleArgs (a:[]) = do 
+	return (a, "the", 500)
+handleArgs [filename, initial_word] = do 
+	return (filename, initial_word, 500) 
+handleArgs [filename, initial_word, count] = do 
+	return (filename, initial_word, read count :: Int) 
 
 generate_text :: Markov_Model -> Token -> Int -> StdGen -> [Token]
 generate_text model t_last 0 _  = [t_last]
