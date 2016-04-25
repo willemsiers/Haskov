@@ -15,8 +15,10 @@ data Unit = Unit deriving Show
 
 type Token = String
 type Freq = Int
-type Markov_Model = [(Token, [(Token, Freq)])]
-type RandomInts = [Int]
+type Followup = (Token, Freq)
+type Gram2 = (Token, Token)
+type Gram3 = (Token, Token, Token)
+type Markov_Model = ([(Gram3, [Followup])], [(Gram2, [Followup])], [(Token, [Followup])])
 
 main = do 
 	let rand_gen = mkStdGen 4321
@@ -24,7 +26,7 @@ main = do
 	(filename, initial_word, word_count) <- (handleArgs prog_args)
 
 	input_string <- readFile filename
-	print $ unwords $ generate_text (model input_string) initial_word word_count rand_gen
+	print $ unwords $ generate_text (model input_string) [initial_word] word_count rand_gen
 		where 
 			model text = get_markov_model $ tokenize $ map toLower text
 
@@ -41,60 +43,81 @@ handleArgs [filename, initial_word] = do
 handleArgs [filename, initial_word, count] = do 
 	return (filename, initial_word, read count :: Int) 
 
-generate_text :: Markov_Model -> Token -> Int -> StdGen -> [Token]
-generate_text model t_last 0 _  = [t_last]
-generate_text model t_last remaining rand_gen
-	| isJust (model_entry) = t_last : generate_text model next_token (remaining-1) new_rand_gen
-	| otherwise = ["!!!EOF: NOTHING FOUND"]
+-- Repeatedly calls next_word
+generate_text :: Markov_Model -> [Token] -> Int -> StdGen -> [Token]
+generate_text _ _ 0 _  = []
+generate_text _ [] _ _  = error "generate_text: history is empty ! This should never happen"
+generate_text model history remaining rand_gen = next_token : generate_text model (history++[next_token]) (remaining-1) new_rand_gen
 		where
-			model_entry :: Maybe (Token, [(Token, Freq)])
-			model_entry = find (\(a, b) -> a==t_last) model
-			(next_token, new_rand_gen) = next_word model t_last rand_gen
-			-- rand_word :: (Token, [(Token, Freq)]) -> Token
-			-- rand_word entry = fst $ (!!) (snd entry) (mod random (length (snd entry)))
-			-- random :: Int
-			-- random = (random_numbers !! (remaining `mod` ( length random_numbers)) )
+			(next_token, new_rand_gen) = next_word model history rand_gen
 
--- type Markov_Model = [(Token, [(Token, Freq)])]
-next_word :: Markov_Model -> Token -> StdGen -> (Token, StdGen)
-next_word _ "" _  = error "got empty token"
-next_word model prev rand_gen
-	| isJust(m_followups) = (fair_word $ fromJust m_followups, new_rand_gen)
-	| otherwise = ("!EOF: NOTHING FOUND!", new_rand_gen)
+-- type Markov_Model = ([(Gram3, [Followup])], [(Gram2, [Followup])], [Token])
+-- Try match as long a number from the "history" [Token] list with the Markov_Model. First try 3, then 2 then 1. Return a matched (semi-randomized/weighted) Token as well as a new StdGen
+next_word :: Markov_Model -> [Token] -> StdGen -> (Token, StdGen)
+next_word _ [] _  = error " next_word: history is empty! This should never happen."
+next_word model history rand_gen 
+	| length history >= 3 && isJust(m_followups 3) = (fair_match $ fromJust (m_followups 3), new_rand_gen)
+	| length history >= 2 && isJust(m_followups 2) = (fair_match $ fromJust (m_followups 2), new_rand_gen)
+	| length history >= 1 && isJust(m_followups 1) = (fair_match $ fromJust (m_followups 1), new_rand_gen)
+	| otherwise = ("!EOF: NOThING FOUnD 2!", new_rand_gen)
 	where
-		m_followups :: Maybe [(Token, Freq)]
-		m_followups = lookup prev model
-		best_word :: (Token, [(Token, Freq)]) -> Token
-		best_word entry = fst $ maximumBy (compare `on` snd) $ snd entry
+		m_followups :: Int -> Maybe [Followup]
+		m_followups lookback
+			| lookback == 1 = lookup last_one (modeltokens model)
+			| lookback == 2 = lookup last_two (model2grams model)
+			| lookback >= 3 = lookup last_three (model3grams model)
+			| otherwise = error "uncaught next_word case"
+		fair_match :: [Followup] -> Token
+		fair_match selection = find_entry_on_scale selection $ rand_num
+		last_one :: Token
+		last_one = (last history)
+		last_two :: Gram2
+		last_two = (last.init $ history, last history)
+		last_three :: Gram3
+		last_three = (last.init.init $ history, last.init $ history, last history)
 		(rand_num, new_rand_gen) = next rand_gen
-		fair_word :: [(Token, Freq)] -> Token
-		fair_word selection = find_entry_on_scale selection $ rand_num
+		-- best_word :: (Token, [Followup]) -> Token
+		-- best_word entry = fst $ maximumBy (compare `on` snd) $ snd entry
 
-find_entry_on_scale :: [(Token, Freq)] -> Int -> Token
+-- Get the (Token, [Followup]) pairs from the model
+modeltokens :: Markov_Model -> [(Token, [Followup])]
+modeltokens (_, _, a) = a
+model2grams :: Markov_Model -> [(Gram2, [Followup])]
+model2grams (_, a, _) = a
+model3grams :: Markov_Model -> [(Gram3, [Followup])]
+model3grams (a, _, _) = a
+
+-- Picks a (random) element from [Followup] based on it's frequency. The second arguments should be random for a random pick from the weighted Followups.
+find_entry_on_scale :: [Followup] -> Int -> Token
 find_entry_on_scale ts num = fst $ result  -- trace ("rand: "++show (max_prob) ++" --- " ++  show(result) ++ " ----------" ++show(accum_prob_map))   
 	where
-		result :: (Token, Freq)
+		result :: Followup
 		result = head $ filter (\(t,f) -> (num `mod` (max_prob+1)) <= f ) (accum_prob_map)
 		-- mapAccumL :: (acc -> x -> (acc, y)) -> acc -> [x] -> (acc, [y])
 		(max_prob, accum_prob_map) = mapAccumL (\ a (t,f) -> (a+f, (t,a+f)) ) 0 ts
 
+-- type Markov_Model = ([(Gram3, [Followup])], [(Gram2, [Followup])], [(Token, [Followup])])
+-- TODO: FIll in gram3 and gram2
 get_markov_model :: [Token] -> Markov_Model
 get_markov_model ts = 
+	([],
+	 [],
 	map ( \a -> 
 			(a, fol_freq $ followups a)
 		) $ nub ts
+	)
 	where
-		pairs :: [(Token, Token)]
+		pairs :: [Gram2]
 		pairs = get_token_pairs ts
 		followups :: Token -> [Token]
 		followups token = map snd $ filter (\(a, b) -> a==token) pairs
-		fol_freq :: [Token] -> [(Token, Freq)]
+		fol_freq :: [Token] -> [Followup]
 		fol_freq ts = map (\t -> (head t, length t)) $ group $ sort ts
 
-token_frequencies :: [Token] -> [(Token, Freq)]
+token_frequencies :: [Token] -> [Followup]
 token_frequencies ts = map (\t -> (head t, length t)) $ group $ sort ts
 
-get_token_pairs :: [Token] -> [(Token, Token)]
+get_token_pairs :: [Token] -> [Gram2]
 get_token_pairs [] = []
 get_token_pairs (t:[]) = [(t, "EOF")]
 get_token_pairs (t:ts) = (t, head ts) : get_token_pairs ts
