@@ -31,8 +31,8 @@ main = do
 			model text = get_markov_model $ tokenize $ map toLower text
 
 	
-	--	return = Just
-	--	fail _ = Nothing
+--	return = Just
+--	fail _ = Nothing
 -- handleArgs :: [String] -> Maybe (String, String)
 handleArgs [] = do 
 	fail "\nUsage: markov FILE [WORD] [COUNT]"
@@ -76,8 +76,6 @@ next_word model history rand_gen
 		last_three :: Gram3
 		last_three = (last.init.init $ history, last.init $ history, last history)
 		(rand_num, new_rand_gen) = next rand_gen
-		-- best_word :: (Token, [Followup]) -> Token
-		-- best_word entry = fst $ maximumBy (compare `on` snd) $ snd entry
 
 -- Get the (Token, [Followup]) pairs from the model
 modeltokens :: Markov_Model -> [(Token, [Followup])]
@@ -89,38 +87,53 @@ model3grams (a, _, _) = a
 
 -- Picks a (random) element from [Followup] based on it's frequency. The second arguments should be random for a random pick from the weighted Followups.
 find_entry_on_scale :: [Followup] -> Int -> Token
-find_entry_on_scale ts num = fst $ result  -- trace ("rand: "++show (max_prob) ++" --- " ++  show(result) ++ " ----------" ++show(accum_prob_map))   
+find_entry_on_scale ts num = fst $ result
 	where
 		result :: Followup
-		result = head $ filter (\(t,f) -> (num `mod` (max_prob+1)) <= f ) (accum_prob_map)
+		result = head $ filter (\(t,f) -> (num `mod` (max_prob+1)) <= f ) (accum_prob_map)-- TODO: eliminate 'head' calls
 		-- mapAccumL :: (acc -> x -> (acc, y)) -> acc -> [x] -> (acc, [y])
 		(max_prob, accum_prob_map) = mapAccumL (\ a (t,f) -> (a+f, (t,a+f)) ) 0 ts
 
 -- type Markov_Model = ([(Gram3, [Followup])], [(Gram2, [Followup])], [(Token, [Followup])])
--- TODO: FIll in gram3 and gram2
 get_markov_model :: [Token] -> Markov_Model
 get_markov_model ts = 
-	([],
-	 [],
-	map ( \a -> 
-			(a, fol_freq $ followups a)
-		) $ nub ts
+	(
+	filter (\(a,b) -> b /= [] ) $ map ( \g3 -> 
+			( (toGram3 g3), followup_freq $ followups 3 g3 ts)
+		) $ nub $ token_grams 3 ts
+	,filter (\(a,b) -> b /= [] ) $ map ( \g2 -> 
+	 		( (toGram2 g2), followup_freq $ followups 2 g2 ts)
+	 	) $ nub $ token_grams 2 ts
+	,
+	 filter (\(a,b) -> b /= [] ) $ map ( \g1 -> 
+			 ( (toGram1 g1), followup_freq $ followups 1 g1 ts)
+		 ) $ nub $ token_grams 1 ts
 	)
 	where
-		pairs :: [Gram2]
-		pairs = get_token_pairs ts
-		followups :: Token -> [Token]
-		followups token = map snd $ filter (\(a, b) -> a==token) pairs
-		fol_freq :: [Token] -> [Followup]
-		fol_freq ts = map (\t -> (head t, length t)) $ group $ sort ts
+		followups :: Int -> [Token] -> [Token] -> [Token] -- for each [a,b,c], where a,b==init and c==last, return [c]
+		followups n tokens allTokens = map last $ filter (\g -> (init g) == tokens) (token_grams (n+1) allTokens)
+		followup_freq :: [Token] -> [Followup] -- takes [c] (see above) and returns [(c, freq)]
+		followup_freq followers = map (\f -> (head f, length f)) (group.sort $ followers) 
+	
+toGram1 :: [Token] -> Token
+toGram1 [a] = (a)
+toGram1 _ = undefined
+
+
+toGram2 :: [Token] -> Gram2
+toGram2 [a,b] = (a,b)
+toGram2 _ = undefined
+
+toGram3 :: [Token] -> Gram3
+toGram3 [a,b,c] = (a,b,c)
+toGram3 _ = undefined
 
 token_frequencies :: [Token] -> [Followup]
 token_frequencies ts = map (\t -> (head t, length t)) $ group $ sort ts
 
-get_token_pairs :: [Token] -> [Gram2]
-get_token_pairs [] = []
-get_token_pairs (t:[]) = [(t, "EOF")]
-get_token_pairs (t:ts) = (t, head ts) : get_token_pairs ts
+token_grams :: Int -> [Token] -> [[Token]]
+token_grams n l =
+	take (length l - (n - 1)) . map (take n) . tails $ l
 
 tokenize :: String -> [Token]
 tokenize [] = []
